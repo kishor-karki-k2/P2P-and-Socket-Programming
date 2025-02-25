@@ -1,4 +1,3 @@
-# message.py
 import json
 
 def encode_message(message_dict):
@@ -20,8 +19,3 @@ def decode_message(message_bytes):
     except Exception as e:
         print("Error decoding message:", e)
         return None
-
-# Example message formats:
-# Introduce message: {"type": "introduce", "username": "Alice"}
-# Chat message: {"type": "chat", "sender": "Alice", "recipient": "Bob", "content": "Hello!"}
-# Presence message: {"type": "presence", "sender": "Alice", "status": "online"} or "offline"
