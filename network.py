@@ -2,7 +2,6 @@ import socket
 import threading
 from message import encode_message, decode_message
 
-
 class PeerNetwork:
     def __init__(self, username, host, port):
         self.username = username
@@ -17,7 +16,6 @@ class PeerNetwork:
     def start_server(self):
         """Start the server socket to listen for incoming connections."""
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # Allow address reuse
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(5)
@@ -38,30 +36,28 @@ class PeerNetwork:
     def handle_connection(self, conn, addr):
         buffer = b""
         try:
-            # Read until we receive a full introduction (terminated by newline)
+            # Wait for introduction message.
             while b'\n' not in buffer:
                 data = conn.recv(4096)
                 if not data:
                     conn.close()
                     return
                 buffer += data
+
             line, buffer = buffer.split(b'\n', 1)
             message = decode_message(line)
             if message and message.get("type") == "introduce":
                 peer_username = message.get("username")
                 print(f"[INFO] Connection request from {peer_username} at {addr}")
-                # Ask for approval if a callback is set.
                 accepted = True
                 if hasattr(self, "connection_request_callback") and self.connection_request_callback:
                     accepted = self.connection_request_callback(peer_username, addr)
                 if accepted:
                     print(f"[INFO] Connection accepted from {peer_username} at {addr}")
-                    # Send our introduction message with newline
                     introduce_msg = {"type": "introduce", "username": self.username}
                     conn.sendall(encode_message(introduce_msg) + b'\n')
                     with self.lock:
                         self.connections[peer_username] = conn
-                    # Process subsequent messages
                     while self.running:
                         data = conn.recv(4096)
                         if not data:
@@ -73,7 +69,6 @@ class PeerNetwork:
                             self.process_message(line, peer_username)
                 else:
                     print(f"[INFO] Connection rejected from {peer_username} at {addr}")
-                    # Optionally, you could send a rejection message here.
                     conn.close()
                     return
             else:
@@ -83,7 +78,6 @@ class PeerNetwork:
         finally:
             conn.close()
             with self.lock:
-                # Remove connection if exists
                 to_remove = None
                 for user, sock in self.connections.items():
                     if sock == conn:
@@ -97,10 +91,9 @@ class PeerNetwork:
         try:
             conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             conn.connect((peer_host, peer_port))
-            # Send introduction message with newline
             introduce_msg = {"type": "introduce", "username": self.username}
             conn.sendall(encode_message(introduce_msg) + b'\n')
-            # Receive response introduction (using message framing)
+
             data = b""
             while b'\n' not in data:
                 part = conn.recv(4096)
@@ -115,7 +108,6 @@ class PeerNetwork:
                     print(f"[INFO] Connected to peer: {peer_username} at {peer_host}:{peer_port}")
                     with self.lock:
                         self.connections[peer_username] = conn
-                    # Start a thread to listen for messages from this peer
                     threading.Thread(target=self.listen_to_peer, args=(conn, peer_username), daemon=True).start()
                 else:
                     print("[ERROR] Did not receive valid introduction from peer.")
@@ -123,11 +115,12 @@ class PeerNetwork:
             else:
                 print("[ERROR] No data received for introduction.")
                 conn.close()
+        except ConnectionRefusedError:
+            print(f"[ERROR] Connecting to peer {peer_host}:{peer_port} - Connection refused.")
         except Exception as e:
             print(f"[ERROR] Connecting to peer {peer_host}:{peer_port} - {e}")
 
     def listen_to_peer(self, conn, peer_username):
-        """Listen for messages from a specific peer using a buffer and newline delimiter."""
         buffer = b""
         try:
             while self.running:
@@ -136,7 +129,6 @@ class PeerNetwork:
                     print(f"[INFO] Connection closed by {peer_username}")
                     break
                 buffer += data
-                # Process all complete messages in the buffer.
                 while b'\n' in buffer:
                     line, buffer = buffer.split(b'\n', 1)
                     self.process_message(line, peer_username)
@@ -149,7 +141,6 @@ class PeerNetwork:
                     del self.connections[peer_username]
 
     def process_message(self, data, peer_username):
-        """Process a received message from a peer."""
         message = decode_message(data)
         if not message:
             output = "[WARN] Received invalid message."
@@ -164,7 +155,8 @@ class PeerNetwork:
                 status = message.get("status")
                 output = f"[PRESENCE] {sender} is now {status}."
             else:
-                output = f"[INFO] {message}"
+                # For file_transfer, group_chat, etc., pass the raw dict
+                output = message
         if self.message_callback:
             self.message_callback(output)
         else:
@@ -177,7 +169,7 @@ class PeerNetwork:
             print(f"[ERROR] No connection found for {recipient_username}")
             return
         if is_dict:
-            chat_msg = content  # content is already a dict
+            chat_msg = content
         else:
             chat_msg = {
                 "type": msg_type,
@@ -197,7 +189,6 @@ class PeerNetwork:
             return list(self.connections.keys())
 
     def broadcast_presence(self, status):
-        """Broadcast presence message to all connected peers."""
         presence_msg = {
             "type": "presence",
             "sender": self.username,
@@ -211,7 +202,6 @@ class PeerNetwork:
                     print(f"[ERROR] Broadcasting to {peer_username}: {e}")
 
     def shutdown(self):
-        """Shutdown the network, close all connections."""
         self.running = False
         self.broadcast_presence("offline")
         with self.lock:
