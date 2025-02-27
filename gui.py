@@ -599,6 +599,13 @@ def main():
         color: #333333;
         font-size: 14px;
     }
+    QPushButton {
+    background-color: #00b241 !important;
+        color: #FFFFFF !important;
+        border: 2px solid #ffffff !important; /* Dark green border for contrast */
+        border-radius: 10px !important;
+        padding: 6px 12px !important;
+    }
 
     /* Input fields styling */
     QLineEdit, QTextEdit, QPlainTextEdit {
