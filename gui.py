@@ -9,29 +9,23 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
     QLineEdit, QPushButton, QMessageBox, QFileDialog, QProgressBar, QDockWidget,
     QListWidget, QToolBar, QAction, QStackedWidget, QLabel, QFormLayout, QInputDialog,
-    QDialog, QDialogButtonBox, QComboBox
+    QDialog, QDialogButtonBox, QComboBox, QGraphicsDropShadowEffect
 )
 
 from network import PeerNetwork
 
-# --------------------------------------------------------------------------
-# Non-blocking File Transfer Thread
-# --------------------------------------------------------------------------
+# ------------------- FileTransferThread -------------------
 class FileTransferThread(QThread):
     progress = pyqtSignal(int)
-
     def __init__(self, total_bytes):
         super().__init__()
         self.total_bytes = total_bytes
-
     def run(self):
         for i in range(101):
             self.progress.emit(i)
             self.msleep(20)
 
-# --------------------------------------------------------------------------
-# Preferences Dialog (stores default sending username)
-# --------------------------------------------------------------------------
+# ------------------- PreferencesDialog -------------------
 class PreferencesDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,13 +40,11 @@ class PreferencesDialog(QDialog):
         form_layout.addRow("Default Sending Username:", self.username_edit)
         self.layout.addLayout(form_layout)
 
-        # Buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
 
-        # Load settings
         self.load_settings()
 
     def load_settings(self):
@@ -68,9 +60,7 @@ class PreferencesDialog(QDialog):
         self.save_settings()
         super().accept()
 
-# --------------------------------------------------------------------------
-# Setup Widget: Collect two usernames and two ports
-# --------------------------------------------------------------------------
+# ------------------- SetupWidget -------------------
 class SetupWidget(QWidget):
     # Signal: (sendUser, sendPort, listenUser, listenPort)
     setupCompleted = pyqtSignal(str, int, str, int)
@@ -143,163 +133,87 @@ class SetupWidget(QWidget):
 
         self.setupCompleted.emit(send_user, send_port, listen_user, listen_port)
 
-# --------------------------------------------------------------------------
-# Chat Widget: Two networks: net_sending (user1/port1) & net_listening (user2/port2)
-# --------------------------------------------------------------------------
-class ChatWidget(QWidget):
-    incomingMessage = pyqtSignal(object)
-
-    def __init__(self, send_user, send_port, listen_user, listen_port, parent=None):
+# ------------------- ChatPanel -------------------
+class ChatPanel(QWidget):
+    def __init__(self, identity, network=None, parent=None):
         super().__init__(parent)
-        self.send_user = send_user
-        self.send_port = send_port
-        self.listen_user = listen_user
-        self.listen_port = listen_port
+        self.identity = identity
+        self.network = network
 
-        self.network_sending = None
-        self.network_listening = None
+        # We name this panel "chatPanel" for QSS styling
+        self.setObjectName("chatPanel")
 
         self.setup_ui()
-        self.incomingMessage.connect(self.process_incoming_message)
-        self.initialize_networks()
+        self.apply_teal_panel()
 
     def setup_ui(self):
-        self.layout = QVBoxLayout()
-        self.layout.setContentsMargins(10, 10, 10, 10)
-        self.layout.setSpacing(10)
-        self.setLayout(self.layout)
+        layout = QVBoxLayout()
+        self.setLayout(layout)
 
-        # Chat display
+        title_label = QLabel(f"Chat Panel - {self.identity}")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(title_label)
+
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
-        self.layout.addWidget(self.chat_display)
+        layout.addWidget(self.chat_display)
 
-        # Identity selection: pick which local user to send as
-        identity_layout = QHBoxLayout()
-        identity_layout.setSpacing(8)
-
-        self.identity_combo = QComboBox()
-        self.identity_combo.addItem(self.send_user)
-        self.identity_combo.addItem(self.listen_user)
-        identity_layout.addWidget(QLabel("Send As:"))
-        identity_layout.addWidget(self.identity_combo)
-
-        self.layout.addLayout(identity_layout)
-
-        # Bottom input area
+        # Horizontal layout for message entry + Send
         input_layout = QHBoxLayout()
-        input_layout.setSpacing(8)
+
         self.msg_entry = QLineEdit()
         self.msg_entry.setPlaceholderText("Type your message here...")
+        self.msg_entry.setObjectName("msgEntry")  # For QSS styling
         self.msg_entry.returnPressed.connect(self.send_message)
         input_layout.addWidget(self.msg_entry)
 
         self.send_button = QPushButton("Send")
+        self.send_button.setObjectName("sendBtn")  # For QSS styling => green
         self.send_button.clicked.connect(self.send_message)
         input_layout.addWidget(self.send_button)
-        self.layout.addLayout(input_layout)
 
-        # Extra actions
-        action_layout = QHBoxLayout()
-        action_layout.setSpacing(8)
+        layout.addLayout(input_layout)
 
-        self.group_button = QPushButton("Group Chat")
-        self.group_button.clicked.connect(self.send_group_message)
-        action_layout.addWidget(self.group_button)
+        # Another row for "Send File" (orange) + "Clear Chat" (red)
+        actions_layout = QHBoxLayout()
 
-        self.file_button = QPushButton("Send File")
-        self.file_button.clicked.connect(self.send_file)
-        action_layout.addWidget(self.file_button)
+        self.send_file_button = QPushButton("Send File")
+        self.send_file_button.setObjectName("fileBtn")  # For QSS => orange
+        self.send_file_button.clicked.connect(self.send_file)
+        actions_layout.addWidget(self.send_file_button)
 
         self.clear_button = QPushButton("Clear Chat")
+        self.clear_button.setObjectName("clearBtn")  # For QSS => red
         self.clear_button.clicked.connect(self.clear_chat)
-        action_layout.addWidget(self.clear_button)
+        actions_layout.addWidget(self.clear_button)
 
-        self.layout.addLayout(action_layout)
+        layout.addLayout(actions_layout)
 
+        # Progress bar for file transfers
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.layout.addWidget(self.progress_bar)
+        layout.addWidget(self.progress_bar)
 
-    def initialize_networks(self):
-        # net_sending
-        self.network_sending = PeerNetwork(self.send_user, "0.0.0.0", self.send_port)
-        self.network_sending.message_callback = self.handle_incoming_message
-        self.network_sending.start_server()
-        self.network_sending.broadcast_presence("online")
+    def apply_teal_panel(self):
+        """
+        Teal background for the chat panel, with rounded corners.
+        """
+        self.setStyleSheet("""
+            border-radius: 10px;
+        """)
+        # Drop shadow effect for a raised look
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(10)
+        shadow.setOffset(5, 5)
+        shadow.setColor(Qt.gray)
+        self.setGraphicsEffect(shadow)
 
-        # net_listening
-        self.network_listening = PeerNetwork(self.listen_user, "0.0.0.0", self.listen_port)
-        self.network_listening.message_callback = self.handle_incoming_message
-        self.network_listening.start_server()
-        self.network_listening.broadcast_presence("online")
-
-        self.append_chat(f"[INFO] Sending Identity: '{self.send_user}' on port {self.send_port}.", msg_type="info")
-        self.append_chat(f"[INFO] Listening Identity: '{self.listen_user}' on port {self.listen_port}.", msg_type="info")
-
-    def handle_incoming_message(self, message):
-        self.incomingMessage.emit(message)
-
-    def process_incoming_message(self, msg):
-        if isinstance(msg, dict):
-            msg_type = msg.get("type")
-            if msg_type == "file_transfer":
-                self.process_file_transfer(msg)
-            elif msg_type == "group_chat":
-                sender = msg.get("sender")
-                group = msg.get("group")
-                content = msg.get("content")
-                bubble_text = f"{sender} in [{group}]: {content}"
-                self.append_chat(bubble_text, msg_type="group", sender=sender)
-            else:
-                self.append_chat(str(msg), msg_type="info")
-        else:
-            text = str(msg)
-            if "[ERROR]" in text:
-                self.append_chat(text, msg_type="error")
-            elif "[INFO]" in text or "[WARN]" in text or "[PRESENCE]" in text:
-                self.append_chat(text, msg_type="info")
-            elif "[CHAT]" in text:
-                try:
-                    _, rest = text.split("] ", 1)
-                    sender, content = rest.split(":", 1)
-                    sender = sender.strip()
-                    content = content.strip()
-                    bubble_text = f"{sender}: {content}"
-                    self.append_chat(bubble_text, msg_type="chat", sender=sender)
-                except:
-                    self.append_chat(text, msg_type="chat")
-            else:
-                self.append_chat(text, msg_type="chat")
-
-    def process_file_transfer(self, msg):
-        sender = msg.get("sender")
-        filename = msg.get("filename")
-        filesize = msg.get("filesize")
-        filedata = msg.get("content")
-        reply = QMessageBox.question(
-            self, "File Transfer",
-            f"Receive file '{filename}' ({filesize} bytes) from {sender}?\nSave file?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            save_path, _ = QFileDialog.getSaveFileName(self, "Save File", filename)
-            if save_path:
-                try:
-                    with open(save_path, "wb") as f:
-                        f.write(base64.b64decode(filedata))
-                    self.append_chat(f"Saved '{filename}' from {sender} to {save_path}.", msg_type="info")
-                except Exception as e:
-                    self.append_chat(f"[ERROR] Failed to save file: {e}", msg_type="error")
-            else:
-                self.append_chat(f"File '{filename}' not saved.", msg_type="info")
-        else:
-            self.append_chat(f"File '{filename}' from {sender} was rejected.", msg_type="info")
-
-    def append_chat(self, text, msg_type="chat", sender=None):
+    def append_message(self, text, msg_type="chat", sender=None):
         align = "left"
-        bubble_color = "#E0F7FA"
+        bubble_color = "orange"
         text_color = "#333333"
+        
 
         if msg_type == "info":
             bubble_color = "#F5F5F5"
@@ -311,16 +225,16 @@ class ChatWidget(QWidget):
             bubble_color = "#E8F5E9"
             text_color = "#2E7D32"
 
-        # If local user is the sender, align right
-        if sender and (sender == self.send_user or sender == self.listen_user):
+        # If the message is from the local identity, align right
+        if sender and sender == self.identity:
             align = "right"
-            bubble_color = "#C8E6C9"
+            bubble_color = "green"
 
         bubble_html = textwrap.dedent(f"""
         <div style="
             background-color: {bubble_color};
             color: {text_color};
-            border-radius: 8px;
+            border-radius: 10px;
             margin: 4px;
             padding: 6px 10px;
             max-width: 60%;
@@ -332,26 +246,21 @@ class ChatWidget(QWidget):
         </div>
         <div style="clear: both;"></div>
         """)
-
         self.chat_display.insertHtml(bubble_html)
         self.chat_display.moveCursor(QTextCursor.End)
         self.chat_display.ensureCursorVisible()
-
-    def get_all_peers(self):
-        # Merge peers from both networks
-        peers_sending = self.network_sending.list_peers()
-        peers_listening = self.network_listening.list_peers()
-        return sorted(set(peers_sending + peers_listening))
 
     def send_message(self):
         message = self.msg_entry.text().strip()
         if not message:
             return
-        all_peers = self.get_all_peers()
+        if self.network is None:
+            QMessageBox.warning(self, "Error", "Network not initialized.")
+            return
+        all_peers = self.network.list_peers()
         if not all_peers:
             QMessageBox.warning(self, "Warning", "No connected peer available. Please connect first.")
             return
-
         if len(all_peers) == 1:
             recipient = all_peers[0]
         else:
@@ -359,41 +268,8 @@ class ChatWidget(QWidget):
             if not ok or not recipient:
                 QMessageBox.information(self, "Info", "Recipient required.")
                 return
-
-        # Decide which identity to send as:
-        chosen_identity = self.identity_combo.currentText()
-        if chosen_identity == self.send_user:
-            net = self.network_sending
-        else:
-            net = self.network_listening
-
-        net.send_chat_message(recipient, message)
-        self.append_chat(f"{chosen_identity}: {message}", msg_type="chat", sender=chosen_identity)
-        self.msg_entry.clear()
-
-    def send_group_message(self):
-        message = self.msg_entry.text().strip()
-        if not message:
-            return
-        group, ok = QInputDialog.getText(self, "Group Chat", "Enter group name:")
-        if not ok or not group:
-            QMessageBox.warning(self, "Warning", "Group name required.")
-            return
-        chosen_identity = self.identity_combo.currentText()
-        group_msg = {
-            "type": "group_chat",
-            "sender": chosen_identity,
-            "group": group,
-            "content": message
-        }
-        all_peers = self.get_all_peers()
-        for peer in all_peers:
-            if chosen_identity == self.send_user:
-                self.network_sending.send_chat_message(peer, group_msg, is_dict=True)
-            else:
-                self.network_listening.send_chat_message(peer, group_msg, is_dict=True)
-
-        self.append_chat(f"{chosen_identity} in [{group}]: {message}", msg_type="group", sender=chosen_identity)
+        self.network.send_chat_message(recipient, message)
+        self.append_message(f"{self.identity}: {message}", msg_type="chat", sender=self.identity)
         self.msg_entry.clear()
 
     def send_file(self):
@@ -409,12 +285,10 @@ class ChatWidget(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to read file: {e}")
             return
-
-        all_peers = self.get_all_peers()
+        all_peers = self.network.list_peers()
         if not all_peers:
             QMessageBox.warning(self, "Warning", "No connected peer available.")
             return
-
         if len(all_peers) == 1:
             recipient = all_peers[0]
         else:
@@ -422,39 +296,112 @@ class ChatWidget(QWidget):
             if not ok or not recipient:
                 QMessageBox.information(self, "Info", "Recipient required.")
                 return
-
-        chosen_identity = self.identity_combo.currentText()
         file_msg = {
             "type": "file_transfer",
-            "sender": chosen_identity,
+            "sender": self.identity,
             "recipient": recipient,
             "filename": filename,
             "filesize": filesize,
             "content": encoded_data
         }
-
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.file_thread = FileTransferThread(filesize)
         self.file_thread.progress.connect(self.progress_bar.setValue)
-        self.file_thread.finished.connect(lambda: self.on_file_transfer_complete(chosen_identity, recipient, filename, filesize, file_msg))
+        self.file_thread.finished.connect(lambda: self.on_file_transfer_complete(recipient, filename, filesize, file_msg))
         self.file_thread.start()
 
-    def on_file_transfer_complete(self, chosen_identity, recipient, filename, filesize, file_msg):
-        if chosen_identity == self.send_user:
-            self.network_sending.send_chat_message(recipient, file_msg, is_dict=True)
-        else:
-            self.network_listening.send_chat_message(recipient, file_msg, is_dict=True)
-
-        self.append_chat(f"Sent '{filename}' ({filesize} bytes) to {recipient}.", msg_type="info")
+    def on_file_transfer_complete(self, recipient, filename, filesize, file_msg):
+        self.network.send_chat_message(recipient, file_msg, is_dict=True)
+        self.append_message(f"Sent '{filename}' ({filesize} bytes) to {recipient}.", msg_type="info")
         self.progress_bar.setVisible(False)
 
     def clear_chat(self):
         self.chat_display.clear()
 
+# ------------------- ChatWidget -------------------
+class ChatWidget(QWidget):
+    def __init__(self, send_user, send_port, listen_user, listen_port, parent=None):
+        super().__init__(parent)
+        self.send_user = send_user
+        self.send_port = send_port
+        self.listen_user = listen_user
+        self.listen_port = listen_port
+        self.network_sending = None
+        self.network_listening = None
+        self.setup_ui()
+        self.initialize_networks()
+
+    def setup_ui(self):
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        # Horizontal layout for two chat panels
+        panels_layout = QHBoxLayout()
+        self.sender_panel = ChatPanel(self.send_user)
+        self.receiver_panel = ChatPanel(self.listen_user)
+        panels_layout.addWidget(self.sender_panel)
+        panels_layout.addWidget(self.receiver_panel)
+        self.layout.addLayout(panels_layout)
+
+        # Extra action: Connect to Peer button
+        actions_layout = QHBoxLayout()
+        self.connect_button = QPushButton("Connect to Peer")
+        self.connect_button.clicked.connect(self.connect_to_peer)
+        actions_layout.addWidget(self.connect_button)
+        self.layout.addLayout(actions_layout)
+
+    def initialize_networks(self):
+        self.network_sending = PeerNetwork(self.send_user, "0.0.0.0", self.send_port)
+        self.network_sending.message_callback = lambda msg: self.process_incoming_message(msg, "sender")
+        self.network_sending.start_server()
+        self.network_sending.broadcast_presence("online")
+
+        self.network_listening = PeerNetwork(self.listen_user, "0.0.0.0", self.listen_port)
+        self.network_listening.message_callback = lambda msg: self.process_incoming_message(msg, "receiver")
+        self.network_listening.start_server()
+        self.network_listening.broadcast_presence("online")
+
+        self.sender_panel.network = self.network_sending
+        self.receiver_panel.network = self.network_listening
+
+        self.sender_panel.append_message(f"[INFO] Chat panel for '{self.send_user}' on port {self.send_port} started.", msg_type="info")
+        self.receiver_panel.append_message(f"[INFO] Chat panel for '{self.listen_user}' on port {self.listen_port} started.", msg_type="info")
+
+    def process_incoming_message(self, msg, panel_type):
+        panel = self.sender_panel if panel_type == "sender" else self.receiver_panel
+        if isinstance(msg, dict):
+            msg_type = msg.get("type")
+            if msg_type == "file_transfer":
+                panel.append_message(f"[File Transfer] Received: {msg}", msg_type="info")
+            elif msg_type == "group_chat":
+                sender = msg.get("sender")
+                group = msg.get("group")
+                content = msg.get("content")
+                bubble_text = f"{sender} in [{group}]: {content}"
+                panel.append_message(bubble_text, msg_type="group", sender=sender)
+            else:
+                panel.append_message(str(msg), msg_type="info")
+        else:
+            text = str(msg)
+            if "[ERROR]" in text:
+                panel.append_message(text, msg_type="error")
+            elif "[INFO]" in text or "[WARN]" in text or "[PRESENCE]" in text:
+                panel.append_message(text, msg_type="info")
+            elif "[CHAT]" in text:
+                try:
+                    _, rest = text.split("] ", 1)
+                    sender, content = rest.split(":", 1)
+                    sender = sender.strip()
+                    content = content.strip()
+                    bubble_text = f"{sender}: {content}"
+                    panel.append_message(bubble_text, msg_type="chat", sender=sender)
+                except:
+                    panel.append_message(text, msg_type="chat")
+            else:
+                panel.append_message(text, msg_type="chat")
+
     def connect_to_peer(self):
-        # We'll always connect from net_sending to remain consistent with original design
-        # but you could also pick which identity to connect from if you like.
         if not self.network_sending:
             QMessageBox.warning(self, "Error", "Sending network not initialized.")
             return
@@ -465,7 +412,7 @@ class ChatWidget(QWidget):
         if not ok or port <= 0:
             return
         self.network_sending.connect_to_peer(ip, port)
-        self.append_chat(f"[INFO] Attempting to connect to {ip}:{port}...", msg_type="info")
+        self.sender_panel.append_message(f"[INFO] Attempting to connect to {ip}:{port}...", msg_type="info")
 
     def shutdown_networks(self):
         if self.network_sending:
@@ -475,13 +422,11 @@ class ChatWidget(QWidget):
             self.network_listening.broadcast_presence("offline")
             self.network_listening.shutdown()
 
-# --------------------------------------------------------------------------
-# Main Window
-# --------------------------------------------------------------------------
+# ------------------- MainWindow -------------------
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("P2P Chat Application ")
+        self.setWindowTitle("P2P Chat Application")
         self.resize(900, 650)
         self.setup_ui()
 
@@ -498,47 +443,36 @@ class MainWindow(QMainWindow):
 
         self.chat_widget = None
 
-        # Dock widget for connected peers
         self.peer_dock = QDockWidget("Connected Peers", self)
         self.peer_list_widget = QListWidget()
         self.peer_dock.setWidget(self.peer_list_widget)
         self.peer_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.addDockWidget(Qt.RightDockWidgetArea, self.peer_dock)
 
-        # Status label & indicator
         self.status_label = QLabel("No peers connected")
-        self.status_indicator = QLabel("●")  # We'll color this circle
+        self.status_indicator = QLabel("●")
         self.status_indicator.setStyleSheet("color: red; font-size: 14px;")
         self.statusBar().addPermanentWidget(self.status_indicator)
         self.statusBar().addPermanentWidget(self.status_label)
         self.statusBar().showMessage("Enter two usernames and two ports to start.")
 
-        # Timer to periodically update peer list & status
         self.peer_timer = QTimer(self)
         self.peer_timer.timeout.connect(self.update_peer_list)
         self.peer_timer.start(3000)
 
     def create_menu_bar(self):
         menubar = self.menuBar()
-
-        # File menu
         file_menu = menubar.addMenu("&File")
-
         self.connect_action = QAction("Connect", self)
         self.connect_action.triggered.connect(self.connect_peer)
         file_menu.addAction(self.connect_action)
-
         self.exit_action = QAction("Exit", self)
         self.exit_action.triggered.connect(self.exit_app)
         file_menu.addAction(self.exit_action)
-
-        # Edit menu
         edit_menu = menubar.addMenu("&Edit")
         self.prefs_action = QAction("Preferences", self)
         self.prefs_action.triggered.connect(self.show_preferences)
         edit_menu.addAction(self.prefs_action)
-
-        # Help menu
         help_menu = menubar.addMenu("&Help")
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about)
@@ -547,34 +481,34 @@ class MainWindow(QMainWindow):
     def create_tool_bar(self):
         toolbar = QToolBar("Main Toolbar", self)
         toolbar.setIconSize(QSize(24, 24))
-        toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)  # Show text beside icon
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.addToolBar(Qt.TopToolBarArea, toolbar)
 
-        # Example icons (replace with your own icon paths if you want icons)
         connect_icon = QIcon("connect_icon.png")
         exit_icon = QIcon("exit_icon.png")
         pref_icon = QIcon("settings_icon.png")
 
-        # Connect action (Green)
         self.connect_action.setIcon(connect_icon)
         self.connect_action.setText("Connect")
-        connect_btn = toolbar.addAction(self.connect_action)
-        toolbar_widget_connect = toolbar.widgetForAction(self.connect_action)
-        toolbar_widget_connect.setObjectName("connectButton")
+        toolbar.addAction(self.connect_action)
 
-        # Preferences action (Blue)
         self.prefs_action.setIcon(pref_icon)
         self.prefs_action.setText("Preferences")
-        prefs_btn = toolbar.addAction(self.prefs_action)
-        toolbar_widget_prefs = toolbar.widgetForAction(self.prefs_action)
-        toolbar_widget_prefs.setObjectName("prefsButton")
+        toolbar.addAction(self.prefs_action)
 
-        # Exit action (Red)
         self.exit_action.setIcon(exit_icon)
         self.exit_action.setText("Exit")
-        exit_btn = toolbar.addAction(self.exit_action)
-        toolbar_widget_exit = toolbar.widgetForAction(self.exit_action)
-        toolbar_widget_exit.setObjectName("exitButton")
+        toolbar.addAction(self.exit_action)
+
+        connect_widget = toolbar.widgetForAction(self.connect_action)
+        if connect_widget:
+            connect_widget.setObjectName("connectButton")
+        prefs_widget = toolbar.widgetForAction(self.prefs_action)
+        if prefs_widget:
+            prefs_widget.setObjectName("prefsButton")
+        exit_widget = toolbar.widgetForAction(self.exit_action)
+        if exit_widget:
+            exit_widget.setObjectName("exitButton")
 
     def on_setup_completed(self, send_user, send_port, listen_user, listen_port):
         self.chat_widget = ChatWidget(send_user, send_port, listen_user, listen_port, self)
@@ -591,7 +525,9 @@ class MainWindow(QMainWindow):
 
     def update_peer_list(self):
         if self.chat_widget:
-            all_peers = self.chat_widget.get_all_peers()
+            peers_sending = self.chat_widget.network_sending.list_peers() if self.chat_widget.network_sending else []
+            peers_listening = self.chat_widget.network_listening.list_peers() if self.chat_widget.network_listening else []
+            all_peers = sorted(set(peers_sending + peers_listening))
             self.peer_list_widget.clear()
             self.peer_list_widget.addItems(all_peers)
 
@@ -609,7 +545,8 @@ class MainWindow(QMainWindow):
 
     def exit_app(self):
         if self.chat_widget:
-            if len(self.chat_widget.get_all_peers()) > 0:
+            if (len(self.chat_widget.network_sending.list_peers()) > 0 or
+                len(self.chat_widget.network_listening.list_peers()) > 0):
                 reply = QMessageBox.question(
                     self,
                     "Confirm Exit",
@@ -624,13 +561,15 @@ class MainWindow(QMainWindow):
     def show_about(self):
         QMessageBox.information(
             self, "About",
-            "P2P Chat Application with Two Different Usernames & Ports\n"
-            "Connect=Green, Preferences=Blue, Exit=Red.\n"
-            "Now you can pick which local identity to send from."
+            "P2P Chat Application with a teal ChatPanel background.\n"
+            "Send=Green, Send File=Orange, Clear Chat=Red, each with a contrasting border.\n"
+            "Message typing box is white with a rounded border.\n"
+            "All previous teal overshadow issues are resolved."
         )
 
     def closeEvent(self, event):
-        if self.chat_widget and len(self.chat_widget.get_all_peers()) > 0:
+        if self.chat_widget and (len(self.chat_widget.network_sending.list_peers()) > 0 or
+                                 len(self.chat_widget.network_listening.list_peers()) > 0):
             reply = QMessageBox.question(
                 self,
                 "Confirm Exit",
@@ -643,68 +582,108 @@ class MainWindow(QMainWindow):
             self.chat_widget.shutdown_networks()
         super().closeEvent(event)
 
-# --------------------------------------------------------------------------
-# Entry Point
-# --------------------------------------------------------------------------
+# ------------------- main() -------------------
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    # Light theme QSS with forced button colors
-    light_qss = """
+    # QSS with teal panel, green/orange/red buttons, white message box, etc.
+    custom_qss = """
+    /* Global Window & Basic Widgets */
     QMainWindow {
         background-color: #F0F0F0;
         color: #333333;
     }
     QWidget {
-        background-color: #F8F8F8;
+        background-color: white;
         color: #333333;
         font-size: 14px;
     }
+
+    /* Input fields styling */
     QLineEdit, QTextEdit, QPlainTextEdit {
-        background-color: #FFFFFF !important;
-        border: 1px solid #CCCCCC !important;
-        border-radius: 4px !important;
+        background-color: white !important;
+        border: 2px solid #CCCCCC !important;
+        border-radius: 10px !important;
         color: #333333 !important;
         padding: 4px !important;
     }
     QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
-        border: 1px solid #4CAF50 !important;
+        border: 2px solid #4CAF50 !important;
     }
-    QPushButton {
-        background-color: #E0E0E0 !important;
+
+    /* The message typing box (objectName="msgEntry") => white + bigger border radius + contrasting border */
+    #msgEntry {
+        background-color: #FFFFFF !important;
+        border: 2px solid #666666 !important; /* Contrasting border */
+        border-radius: 8px !important;
+        padding: 6px !important;
         color: #333333 !important;
-        border: 1px solid #CCCCCC !important;
-        border-radius: 4px !important;
+    }
+
+    /* The send button => green background */
+    #sendBtn {
+        background-color: #00b241 !important;
+        color: #FFFFFF !important;
+        border: 2px solid #ffffff !important; /* Dark green border for contrast */
+        border-radius: 10px !important;
         padding: 6px 12px !important;
     }
-    QPushButton:hover {
-        background-color: #D0D0D0 !important;
+    #sendBtn:hover {
+        background-color: #008200 !important; /* Slightly darker green on hover */
     }
-    QPushButton:pressed {
-        background-color: #C0C0C0 !important;
+
+    /* The send file button => orange background */
+    #fileBtn {
+        background-color: #0099fa !important;
+        color: #FFFFFF !important;
+        border: 2px solid #ffffff !important;
+        border-radius: 10px !important;
+        padding: 6px 12px !important;
     }
+    #fileBtn:hover {
+        background-color: #00568f !important; /* Slightly darker blue */
+    }
+
+    /* The clear chat button => red background */
+    #clearBtn {
+        background-color: red !important;
+        color: #FFFFFF ;
+        border: 2px solid #ffffff !important;
+        border-radius: 10px !important;
+        padding: 6px 12px !important;
+    }
+    #clearBtn:hover {
+        background-color: #CC0000 !important; /* Slightly darker red */
+    }
+
+    /* ToolBar & QToolButton */
     QToolBar {
-        background-color: #E0E0E0 !important;
+        background-color: #2c2c2c !important;
         border: 1px solid #CCCCCC !important;
     }
     QToolBar QToolButton {
         margin: 2px;
         padding: 6px 10px;
-        border-radius: 4px;
+        border-radius: 20px;
     }
     QToolButton#connectButton {
-        background-color: #4CAF50 !important; /* green */
+        background-color: #4CAF50 !important;
         color: #FFFFFF !important;
+        border-radius: 10px;
     }
     QToolButton#prefsButton {
-        background-color: #2196F3 !important; /* blue */
+        background-color: #2196F3 !important;
         color: #FFFFFF !important;
+        border-radius: 10px;
     }
     QToolButton#exitButton {
-        background-color: #F44336 !important; /* red */
+        background-color: #F44336 !important;
         color: #FFFFFF !important;
+        border-radius: 10px;
     }
+
+    /* Progress Bar */
     QProgressBar {
         background-color: #E0E0E0 !important;
         border: 1px solid #CCCCCC !important;
@@ -715,6 +694,8 @@ def main():
     QProgressBar::chunk {
         background-color: #4CAF50 !important;
     }
+
+    /* DockWidget & QListWidget */
     QDockWidget {
         background-color: #F8F8F8 !important;
     }
@@ -730,45 +711,9 @@ def main():
         border: 1px solid #CCCCCC !important;
         border-radius: 4px !important;
     }
-    QTabWidget::pane {
-        border: 1px solid #CCCCCC !important;
-        background: #F8F8F8 !important;
-    }
-    QTabBar::tab {
-        background: #E0E0E0 !important;
-        color: #333333 !important;
-        padding: 6px 12px !important;
-        border-top-left-radius: 4px !important;
-        border-top-right-radius: 4px !important;
-        margin: 2px !important;
-    }
-    QTabBar::tab:selected {
-        background: #4CAF50 !important;
-        color: #FFFFFF !important;
-    }
-    QMenuBar {
-        background-color: #E0E0E0 !important;
-        color: #333333 !important;
-    }
-    QMenuBar::item {
-        background-color: #E0E0E0 !important;
-        padding: 4px 8px !important;
-    }
-    QMenuBar::item:selected {
-        background-color: #D0D0D0 !important;
-    }
-    QMenu {
-        background-color: #FFFFFF !important;
-        color: #333333 !important;
-        margin: 2px !important;
-        border: 1px solid #CCCCCC !important;
-    }
-    QMenu::item:selected {
-        background-color: #F0F0F0 !important;
-    }
     """
 
-    app.setStyleSheet(light_qss)
+    app.setStyleSheet(custom_qss)
     app.setOrganizationName("MyCompany")
     app.setApplicationName("P2PChatApp")
 
